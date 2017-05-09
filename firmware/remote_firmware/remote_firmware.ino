@@ -97,7 +97,7 @@ void getGimbals()
 
   // scale throttle
   throttle = analogRead(throttlePin);
-  throttle = convert(throttle, throttleMin, throttleMax, 0, 1500); 
+  throttle = convert(throttle, throttleMin, throttleMax, 0, 255); 
   
   // scale yaw
   yaw = analogRead(yawPin);

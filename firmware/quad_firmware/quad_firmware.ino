@@ -18,6 +18,12 @@ void setupSensor()
 }
 
 
+long convert( long val, long minA, long maxA, long minB, long maxB)
+{ 
+  return ((val - minA) * (maxB-minB)) / (maxA-minA) + minB;
+
+}
+
 
 typedef struct{
   int magic; 
@@ -68,7 +74,7 @@ int yaw_deriv = 0;
 
 // pid variables
 double kp = 1; 
-double ki = 0.5; 
+double ki = 0.1; 
 double kd = 1; 
 
 
@@ -77,15 +83,40 @@ double roll_motor = 0;
 double pitch_motor = 0; 
 double yaw_motor = 0; 
 
+int roll_readings[] = {0,0,0,0,0,0,0};
+int pitch_readings[] = {0,0,0,0,0,0,0};
+int yaw_readings[] = {0,0,0,0,0,0,0};
 
+int roll_avg = 0; 
+int pitch_avg = 0; 
+int yaw_avg = 0; 
+
+int sliding_avg_window = 7; 
  
 unsigned char data = 0; 
 
 void setup() {
-  Serial.begin(9600);
+  //Serial.begin(9600);
+  Serial.begin(115200);
+  Serial.println("hello"); 
   rfBegin(23);
   pinMode(motor1Pin, OUTPUT); 
-  setupSensor(); 
+
+  while (!Serial) {
+    delay(1); // will pause Zero, Leonardo, etc until serial console opens
+  }
+  
+
+  // Try to initialise and warn if we couldn't detect the chip
+  if (!lsm.begin())
+  {
+    Serial.println("Oops ... unable to initialize the LSM9DS1. Check your wiring!");
+    while (1);
+  }
+  Serial.println("Found LSM9DS1 9DOF");
+
+  // helper to just set the default scaling we want, see above!
+  setupSensor();
 }
 
 void printIMU()
@@ -97,6 +128,7 @@ void printIMU()
   Serial.println(pitch_read); 
   Serial.print("IMU yaw = "); 
   Serial.println(yaw_read); 
+  delay(500); 
 }
 
 void pid()
@@ -123,11 +155,38 @@ void pid()
 
 void adjust_motors()
 {
+  //Serial.println("adjusting motors"); 
   // TODO: scale down roll_motor, pitch_motor, and yaw_motor
-  analogWrite(motor1Pin, throttle + roll_motor - yaw_motor);
-  analogWrite(motor2Pin, throttle + pitch_motor + yaw_motor); 
-  analogWrite(motor3Pin, throttle - roll_motor - yaw_motor); 
-  analogWrite(motor4Pin, throttle - pitch_motor + yaw_motor); 
+  int speed1,speed2,speed3,speed4; 
+  if (throttle < 30) {
+    speed1 = 0; 
+    speed2 = 0; 
+    speed3 = 0; 
+    speed4 = 0; 
+  }
+  else{
+    //speed1 = throttle + roll_motor - yaw_motor; 
+    //speed2 = throttle + pitch_motor + yaw_motor; 
+    speed1 = throttle - pitch_motor - yaw_motor; 
+    speed2 = throttle - pitch_motor + yaw_motor; 
+    speed3 = throttle + pitch_motor - yaw_motor; 
+    speed4 = throttle + pitch_motor + yaw_motor; 
+    //speed3 = throttle - roll_motor - yaw_motor;
+    //speed4 = throttle - pitch_motor + yaw_motor; 
+  }
+  if(speed1 > 255) speed1 = 255; 
+  if(speed2 > 255) speed2 = 255; 
+  if(speed3 > 255) speed3 = 255; 
+  if(speed4 > 255) speed4 = 255; 
+
+  if(speed1 < 0) speed1 = 0; 
+  if(speed2 < 0) speed2 = 0; 
+  if(speed3 < 0) speed3 = 0; 
+  if(speed4 < 0) speed4 = 0;
+  analogWrite(motor1Pin, speed1);
+  analogWrite(motor2Pin, speed2); 
+  analogWrite(motor3Pin, speed3); 
+  analogWrite(motor4Pin, speed4); 
   
 }
 
@@ -137,9 +196,33 @@ void getIMU()
   sensors_vec_t orientation;
   ahrs.getOrientation(&orientation); 
 
+  int new_roll_read = orientation.roll; 
+  int new_pitch_read = orientation.pitch; 
+  int new_yaw_read = orientation.heading; 
+
+
+  roll_avg = roll_avg + (new_roll_read/sliding_avg_window) - (roll_readings[6]/sliding_avg_window); 
+  pitch_avg = pitch_avg + (new_pitch_read/sliding_avg_window) - (pitch_readings[6]/sliding_avg_window); 
+  yaw_avg = yaw_avg + (new_yaw_read/sliding_avg_window) - (yaw_readings[6]/sliding_avg_window); 
+
+  for (int i = 6; i >0 ; i--){ 
+    roll_readings[i] = roll_readings[i-1]; 
+    pitch_readings[i] = pitch_readings[i-1]; 
+    yaw_readings[i] = yaw_readings[i-1];  
+  }
+  roll_readings[0] = new_roll_read; 
+  pitch_readings[0] = new_pitch_read; 
+  yaw_readings[0] = new_yaw_read; 
+  
+  roll_read = roll_avg; 
+  pitch_read = pitch_avg; 
+  yaw_read = yaw_avg; 
+
+  /*
   roll_read = orientation.roll; 
   pitch_read = orientation.pitch; 
   yaw_read = orientation.heading; 
+  */
   
 }
 
@@ -149,18 +232,74 @@ void getRadio()
     char bytesRead = rfRead((uint8_t*)&control_signals, sizeof(Controller)); 
     if(bytesRead == 10 && control_signals.magic == 0xBEAF) { 
       yaw_target = control_signals.yaw; 
+      yaw_target = convert(yaw_target, 0, 1024, -100, 100);
       throttle = control_signals.throttle; 
       roll_target = control_signals.roll; 
+      roll_target = convert(roll_target, 0, 1024, -100, 100); 
       pitch_target = control_signals.pitch;  
+      pitch_target = convert(pitch_target, 0, 1024, -100, 100); 
+      //Serial.println(throttle); 
     }
   }
   
 }
-void loop() {
 
+void debug(){
+  /*
+  Serial.print("throttle = "); 
+  Serial.println(throttle); 
+  Serial.print("pitch adjust = "); 
+  Serial.println(pitch_motor); 
+  Serial.print("roll adjust = "); 
+  Serial.println(roll_motor); 
+  */
+  /*
+  Serial.print("pitch err = ");
+  Serial.println(pitch_err); 
+  Serial.print("pitch deriv = "); 
+  Serial.println(pitch_deriv); 
+  Serial.print("pitch integ = "); 
+  Serial.println(pitch_integ); 
+  */
+
+  Serial.print(40); 
+  Serial.print(" "); 
+  Serial.print(-40);
+  Serial.print(" ");  
+  Serial.print(throttle - pitch_motor); 
+  Serial.print(" "); 
+  Serial.println(throttle + pitch_motor);
+
+  /*
+  Serial.print(40); 
+  Serial.print(" "); 
+  Serial.print(-40);
+  Serial.print(" ");  
+  Serial.print(pitch_err); 
+  Serial.print(" "); 
+  Serial.println(pitch_deriv);
+  */
+  /*
+  Serial.print(40); 
+  Serial.print(" "); 
+  Serial.print(-40);
+  Serial.print(" ");  
+  Serial.print(yaw_err); 
+  Serial.print(" "); 
+  Serial.println(yaw_deriv);
+  */
+  //Serial.print("yaw adjust = "); 
+  //Serial.println(yaw_motor); 
+  //delay(00); 
+  
+}
+void loop() {
+  //Serial.println("starting loop"); 
   getRadio(); 
   getIMU(); 
   pid(); 
-  adjust_motors(); 
+  adjust_motors();
+  debug();  
+  //printIMU(); 
   
 }

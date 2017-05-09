@@ -1,0 +1,7 @@
+Noise
+
+To fix the noise problem we configured the control registers of the accelerometer to automatically apply a filter. 
+We configured it to have a cutoff frequency of 400Hz, an ODR(output data rate) of 952 Hz, and a bandwidth of 408 Hz. 
+These settings significantly reduced the noise in the IMU readings. 
+
+We also applied a moving average filter to remove noise and outliers. We chose a window size of 7 for the moving average filter. 
