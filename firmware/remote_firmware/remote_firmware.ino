@@ -8,6 +8,8 @@ typedef struct{
   int yaw; 
   int roll; 
   int pitch; 
+  int potL; 
+  int potR; 
 } Controller; 
 
 Controller control_signals; 
@@ -19,6 +21,11 @@ int yawPin = 0;
 int throttlePin = 1;
 int rollPin = 2;
 int pitchPin = 3;
+int potRight = 6; 
+int potLeft = 7; 
+
+int buttonRedPin = 17; 
+int buttonBluePin = 16; 
 
 // Initialize gimbal values 
 long yaw = 0;           
@@ -42,6 +49,20 @@ long pitchMax = 840;
 long pitchMin = 94; 
 
 
+int armed; 
+int potLeftVal,potRightVal; 
+
+
+const int ledRedPin = 24;      // the number of the LED pin
+
+
+int ledRedState = HIGH;         
+int buttonRedState;             
+int lastButtonRedState = LOW;  
+
+
+unsigned long lastDebounceRedTime = 0;  
+unsigned long debounceDelay = 50;    
 
 
 
@@ -58,11 +79,15 @@ void setup()
 {
 
   Serial.begin(9600);          //  setup serial
+  pinMode(buttonRedPin, INPUT_PULLUP);           
+  pinMode(buttonBluePin, INPUT_PULLUP);
   rfBegin(23);
   lcd.home(); 
   lcd.display();
   
   control_signals.magic = 0xBEAF; 
+
+             
 
 }
 
@@ -118,19 +143,63 @@ void sendRadio()
   control_signals.yaw = yaw; 
   control_signals.pitch = pitch; 
   control_signals.roll = roll; 
+  control_signals.potR = potRightVal; 
+  control_signals.potL = potLeftVal; 
 
 
   rfWrite((uint8_t*)&control_signals, sizeof(Controller));
 }
 
+void getPots()
+{
+  // scale throttle
+  potRightVal = analogRead(potRight);
+  potRightVal = convert(potRightVal, 110, 818, 0, 500); 
+  potLeftVal = analogRead(potLeft); 
+  potLeftVal = convert(potLeftVal, 110, 818, 0, 500); 
+
+  // min pot value = 110
+  // max pot value = 818
+
+  
+}
+void debugPots()
+{
+  Serial.print("pot right = "); 
+  Serial.print(potRightVal); 
+  Serial.print(", pot left = "); 
+  Serial.println(potLeftVal); 
+}
 void loop()
 {
-
+  
+  
+  if(!armed){
+    int reading = digitalRead(buttonRedPin);
+    Serial.print("reading = "); 
+    Serial.print(reading); 
+    Serial.print(", throttle = "); 
+    Serial.println(throttle); 
+    if (reading == 0 & throttle < 20){ 
+      digitalWrite(ledRedPin, HIGH); 
+      digitalWrite(7, HIGH); 
+      armed = 1; 
+    }
+  }
+  
+  
   print_lcd(); 
 
   getGimbals(); 
+
+
+  getPots(); 
+  //debugPots(); 
   
-  sendRadio(); 
+  if(armed){
+    sendRadio(); 
+  }
+ 
   
 }
 

@@ -31,6 +31,8 @@ typedef struct{
   int yaw; 
   int roll; 
   int pitch; 
+  int potL; 
+  int potR; 
 } Controller; 
 
 Controller control_signals; 
@@ -66,6 +68,7 @@ int roll_integ = 0;
 int pitch_integ = 0; 
 int yaw_integ = 0; 
 
+
 // pid derivatives
 int roll_deriv = 0; 
 int pitch_deriv = 0; 
@@ -73,9 +76,9 @@ int yaw_deriv = 0;
 
 
 // pid variables
-double kp = 1; 
-double ki = 0.1; 
-double kd = 1; 
+double kp = 1; //.05
+double ki = 0.0;  //.015
+double kd = 3.7; 
 
 
 // pid motor settings 
@@ -91,15 +94,33 @@ int roll_avg = 0;
 int pitch_avg = 0; 
 int yaw_avg = 0; 
 
-int sliding_avg_window = 7; 
+int start, past_start; 
+
+double hz; 
+
+double potLeftVal,potRightVal; 
+
+int sliding_avg_window = 4; 
  
 unsigned char data = 0; 
+unsigned int last = millis();
+unsigned int now = millis();
+
+// motor speeds
+int speed1,speed2,speed3,speed4; 
+
+int motor3offset = -30; 
+int motor4offset = -30; 
+
+
+int pitchOffset,rollOffset,yawOffset; 
 
 void setup() {
   //Serial.begin(9600);
   Serial.begin(115200);
   Serial.println("hello"); 
   rfBegin(23);
+  pinMode(7, OUTPUT); 
   pinMode(motor1Pin, OUTPUT); 
 
   while (!Serial) {
@@ -117,6 +138,22 @@ void setup() {
 
   // helper to just set the default scaling we want, see above!
   setupSensor();
+
+  delay(2); 
+  calibrateIMU(); 
+}
+
+void calibrateIMU()
+{
+
+  sensors_vec_t orientation;
+  ahrs.getOrientation(&orientation); 
+
+  rollOffset = orientation.roll; 
+  pitchOffset = orientation.pitch; 
+  yawOffset = orientation.heading; 
+
+  digitalWrite(25, HIGH); 
 }
 
 void printIMU()
@@ -133,31 +170,42 @@ void printIMU()
 
 void pid()
 { 
+  past_start = start; 
+  start = millis(); 
+
+  int duration = start - past_start; 
+  hz = 1000.0/duration; 
+  
   roll_err = roll_target - roll_read;
   roll_integ = (roll_integ/2) + roll_err;
   roll_deriv = roll_err - roll_prev_err;
   roll_prev_err = roll_err; 
-  roll_motor = (kp*roll_err) + (ki*roll_integ) + (kd+roll_deriv);
+  roll_motor = (kp*roll_err) + (ki*roll_integ) + (kd*roll_deriv);
 
 
   pitch_err = pitch_target - pitch_read;
   pitch_integ = (pitch_integ/2) + pitch_err;
   pitch_deriv = pitch_err - pitch_prev_err;
   pitch_prev_err = pitch_err; 
-  pitch_motor = (kp*pitch_err) + (ki*pitch_integ) + (kd+pitch_deriv);
+  pitch_motor = (kp*pitch_err) + (ki*pitch_integ) + (kd*pitch_deriv);
 
+  //Serial.print(pitch_err);
+  //Serial.print(" "); 
+  //Serial.print(pitch_deriv); 
+  //Serial.print(" "); 
+  //Serial.println(pitch_integ); 
   yaw_err = yaw_target - yaw_read;
   yaw_integ = (yaw_integ/2) + yaw_err;
   yaw_deriv = yaw_err - yaw_prev_err;
   yaw_prev_err = yaw_err; 
-  yaw_motor = (kp*yaw_err) + (ki*yaw_integ) + (kd+yaw_deriv);
+  yaw_motor = (kp*yaw_err) + (ki*yaw_integ) + (kd*yaw_deriv);
 }
 
 void adjust_motors()
 {
   //Serial.println("adjusting motors"); 
   // TODO: scale down roll_motor, pitch_motor, and yaw_motor
-  int speed1,speed2,speed3,speed4; 
+  
   if (throttle < 30) {
     speed1 = 0; 
     speed2 = 0; 
@@ -167,12 +215,21 @@ void adjust_motors()
   else{
     //speed1 = throttle + roll_motor - yaw_motor; 
     //speed2 = throttle + pitch_motor + yaw_motor; 
+    /*
     speed1 = throttle - pitch_motor - yaw_motor; 
     speed2 = throttle - pitch_motor + yaw_motor; 
     speed3 = throttle + pitch_motor - yaw_motor; 
     speed4 = throttle + pitch_motor + yaw_motor; 
+    */
     //speed3 = throttle - roll_motor - yaw_motor;
     //speed4 = throttle - pitch_motor + yaw_motor; 
+
+
+
+    speed1 = throttle - pitch_motor; 
+    speed2 = throttle - pitch_motor; 
+    speed3 = throttle + pitch_motor + motor3offset; 
+    speed4 = throttle + pitch_motor + motor4offset; 
   }
   if(speed1 > 255) speed1 = 255; 
   if(speed2 > 255) speed2 = 255; 
@@ -187,7 +244,30 @@ void adjust_motors()
   analogWrite(motor2Pin, speed2); 
   analogWrite(motor3Pin, speed3); 
   analogWrite(motor4Pin, speed4); 
-  
+  /*
+  if(millis() % 20 == 0){
+    debugMotorSpeed(); 
+  }
+  */
+}
+
+void debugMotorSpeed(){
+  Serial.print("motor1 = "); 
+  Serial.print(speed1); 
+  Serial.print(", motor2 = "); 
+  Serial.print(speed2); 
+  Serial.print(", motor3 = "); 
+  Serial.print(speed3); 
+  Serial.print(", motor4 = "); 
+  Serial.print(speed4); 
+  Serial.print(", pitch error = ");
+  Serial.print(pitch_err);
+  Serial.print(", pitch integ = ");
+  Serial.print(pitch_integ);
+  Serial.print(", pitch deriv = ");
+  Serial.print(pitch_deriv);
+  Serial.print(", hz = ");
+  Serial.println(hz);
 }
 
 void getIMU()
@@ -196,9 +276,9 @@ void getIMU()
   sensors_vec_t orientation;
   ahrs.getOrientation(&orientation); 
 
-  int new_roll_read = orientation.roll; 
-  int new_pitch_read = orientation.pitch; 
-  int new_yaw_read = orientation.heading; 
+  int new_roll_read = orientation.roll - rollOffset; 
+  int new_pitch_read = orientation.pitch - pitchOffset; 
+  int new_yaw_read = orientation.heading - yawOffset; 
 
 
   roll_avg = roll_avg + (new_roll_read/sliding_avg_window) - (roll_readings[6]/sliding_avg_window); 
@@ -230,7 +310,7 @@ void getRadio()
 {
   if(rfAvailable()) {
     char bytesRead = rfRead((uint8_t*)&control_signals, sizeof(Controller)); 
-    if(bytesRead == 10 && control_signals.magic == 0xBEAF) { 
+    if(bytesRead == 14 && control_signals.magic == 0xBEAF) { 
       yaw_target = control_signals.yaw; 
       yaw_target = convert(yaw_target, 0, 1024, -100, 100);
       throttle = control_signals.throttle; 
@@ -238,13 +318,21 @@ void getRadio()
       roll_target = convert(roll_target, 0, 1024, -100, 100); 
       pitch_target = control_signals.pitch;  
       pitch_target = convert(pitch_target, 0, 1024, -100, 100); 
-      //Serial.println(throttle); 
+      potLeftVal = control_signals.potL/100.0; 
+      potRightVal = control_signals.potR/100.0;  
+      //Serial.println("reading radio"); 
     }
   }
   
 }
 
 void debug(){
+  /*
+  Serial.print("pot left = "); 
+  Serial.print(potLeftVal); 
+  Serial.print(", pot right = "); 
+  Serial.println(potRightVal); 
+  */
   /*
   Serial.print("throttle = "); 
   Serial.println(throttle); 
@@ -262,6 +350,7 @@ void debug(){
   Serial.println(pitch_integ); 
   */
 
+  /*
   Serial.print(40); 
   Serial.print(" "); 
   Serial.print(-40);
@@ -269,8 +358,8 @@ void debug(){
   Serial.print(throttle - pitch_motor); 
   Serial.print(" "); 
   Serial.println(throttle + pitch_motor);
-
-  /*
+  */
+  
   Serial.print(40); 
   Serial.print(" "); 
   Serial.print(-40);
@@ -278,7 +367,7 @@ void debug(){
   Serial.print(pitch_err); 
   Serial.print(" "); 
   Serial.println(pitch_deriv);
-  */
+  
   /*
   Serial.print(40); 
   Serial.print(" "); 
@@ -297,9 +386,24 @@ void loop() {
   //Serial.println("starting loop"); 
   getRadio(); 
   getIMU(); 
-  pid(); 
+
+  
+ 
+
+  now = millis();
+  int interval = now - last;
+  if (abs(interval) > 3) {
+        pid();  
+        debugMotorSpeed(); 
+  }
+  last = now;
+  /*
+  if(millis()%6==0){
+    pid();
+  } 
+  */
   adjust_motors();
-  debug();  
+  //debug();  
   //printIMU(); 
   
 }
